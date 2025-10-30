@@ -38,12 +38,6 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "✓ GCC found: $gccVersion" -ForegroundColor Green
 Write-Host ""
 
-# Navigate to project directory
-$projectDir = Split-Path $PSScriptRoot -Parent
-Set-Location $projectDir
-
-Write-Host "Project directory: $projectDir" -ForegroundColor Gray
-Write-Host ""
 
 # Clean old build artifacts
 Write-Host "Cleaning old build artifacts..." -ForegroundColor Yellow

@@ -1,7 +1,9 @@
 # Quick-Test.ps1
 # Minimal test of ThinkSQL.dll
 
-$dllPath = "W:\github\ThinkSQL\ThinkSQL.dll"
+# Get the directory of this script
+$dllPath = Join-Path $PSScriptRoot "..\ThinkSQL.dll"
+$dllPath = (Resolve-Path $dllPath -ErrorAction Stop).Path
 
 Write-Host "Testing: $dllPath`n"
 
@@ -10,28 +12,34 @@ if (-not (Test-Path $dllPath)) {
     exit 1
 }
 
-$sig = @'
-[DllImport("W:\\github\\ThinkSQL\\ThinkSQL.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+$sig = @"
+[DllImport("$($dllPath.Replace('\','\\'))", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
 public static extern IntPtr ConnectDb([MarshalAs(UnmanagedType.LPStr)] string connStr);
 
-[DllImport("W:\\github\\ThinkSQL\\ThinkSQL.dll", CallingConvention = CallingConvention.Cdecl)]
+[DllImport("$($dllPath.Replace('\','\\'))", CallingConvention = CallingConvention.Cdecl)]
 public static extern void DisconnectDb();
 
-[DllImport("W:\\github\\ThinkSQL\\ThinkSQL.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+[DllImport("$($dllPath.Replace('\','\\'))", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
 public static extern IntPtr ExecuteSql([MarshalAs(UnmanagedType.LPStr)] string sqlStr);
 
-[DllImport("W:\\github\\ThinkSQL\\ThinkSQL.dll", CallingConvention = CallingConvention.Cdecl)]
+[DllImport("$($dllPath.Replace('\','\\'))", CallingConvention = CallingConvention.Cdecl)]
 public static extern void FreeCString(IntPtr str);
 
 public static string PtrToString(IntPtr ptr) {
     if (ptr == IntPtr.Zero) return null;
     return System.Runtime.InteropServices.Marshal.PtrToStringAnsi(ptr);
 }
-'@
+"@
 
-Add-Type -MemberDefinition $sig -Namespace Win32 -Name ThinkSQL
+try {
+    Add-Type -MemberDefinition $sig -Namespace Win32 -Name ThinkSQL -ErrorAction Stop
+}
+catch {
+    # Type might already exist from previous run - that's okay
+    Write-Host "Note: Type already loaded (this is normal)" -ForegroundColor Gray
+}
 
-$connStr = "server=localhost;user id=SA;password=NeverSafe2Day!;database=master"
+$connStr = "server=localhost;user id=SA;password=NeverSafe2Day!;database=master;encrypt=disable;TrustServerCertificate=true"
 
 Write-Host "Connecting..." -ForegroundColor Yellow
 $result = [Win32.ThinkSQL]::ConnectDb($connStr)
