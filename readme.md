@@ -56,6 +56,8 @@ Import-Module .\ThinkSQL-Module\ThinkSQL.psd1
 # Connect
 Connect-ThinkSQLConnection -Server "localhost" -Username "sa" -Password "YourPassword"
 
+Connect-ThinkSQLConnection -ConnectionString "server=localhost;database=master;user id=sa;password=YourPassword"
+
 # Query (returns PowerShell objects)
 $results = Invoke-ThinkSQL "SELECT * FROM sys.databases"
 $results | Format-Table
