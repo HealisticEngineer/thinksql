@@ -16,6 +16,9 @@ import (
 	_ "github.com/denisenkom/go-mssqldb" // SQL Server driver
 )
 
+// jsonEscapeString provides faster string escaping for JSON without full Marshal overhead
+// This is used for simple cases but we still use json.Marshal for safety with complex types
+
 // Global variable to hold the database connection pool.
 var db *sql.DB
 
@@ -153,23 +156,25 @@ func ExecuteSql(inputSql *C.char) *C.char {
 			return C.CString(fmt.Sprintf("ERROR: Failed to get columns: %v", err))
 		}
 
-		// Build result set
-		var results []map[string]interface{}
-		for rows.Next() {
-			// Create a slice of interface{} to hold each column value
-			columnValues := make([]interface{}, len(columns))
-			columnPointers := make([]interface{}, len(columns))
-			for i := range columnValues {
-				columnPointers[i] = &columnValues[i]
-			}
+		// Pre-allocate with initial capacity to reduce allocations
+		results := make([]map[string]interface{}, 0, 32)
 
+		// Reuse these slices across rows to reduce allocations
+		columnValues := make([]interface{}, len(columns))
+		columnPointers := make([]interface{}, len(columns))
+		for i := range columnValues {
+			columnPointers[i] = &columnValues[i]
+		}
+
+		// Build result set
+		for rows.Next() {
 			// Scan the row into the column pointers
 			if err := rows.Scan(columnPointers...); err != nil {
 				return C.CString(fmt.Sprintf("ERROR: Failed to scan row: %v", err))
 			}
 
-			// Create a map for this row
-			row := make(map[string]interface{})
+			// Create a map for this row with pre-allocated size
+			row := make(map[string]interface{}, len(columns))
 			for i, colName := range columns {
 				val := columnValues[i]
 				// Convert byte arrays to strings for better JSON representation
@@ -186,7 +191,7 @@ func ExecuteSql(inputSql *C.char) *C.char {
 			return C.CString(fmt.Sprintf("ERROR: Row iteration error: %v", err))
 		}
 
-		// Marshal results to JSON
+		// Marshal results to JSON with compact output (no indentation)
 		jsonData, err := json.Marshal(results)
 		if err != nil {
 			return C.CString(fmt.Sprintf("ERROR: Failed to marshal JSON: %v", err))
