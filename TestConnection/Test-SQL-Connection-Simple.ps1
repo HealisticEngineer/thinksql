@@ -73,16 +73,26 @@ try {
         
         # Test query
         Write-Host "Running test query..." -ForegroundColor Yellow
-        $query = "SELECT @@VERSION"
+        $query = "SELECT @@VERSION AS Version"
         
         $execResult = [Win32.SQL]::ExecuteSql($query)
         if ($execResult -eq [IntPtr]::Zero) {
-            Write-Host "[OK] Query executed!`n" -ForegroundColor Green
+            Write-Host "[OK] Non-SELECT query executed!`n" -ForegroundColor Green
         }
         else {
-            $err = [Win32.SQL]::PtrToString($execResult)
-            Write-Host "[ERROR] Query failed: $err`n" -ForegroundColor Red
+            # For SELECT, this contains JSON results
+            $result = [Win32.SQL]::PtrToString($execResult)
             [Win32.SQL]::FreeCString($execResult)
+            
+            try {
+                $json = $result | ConvertFrom-Json
+                Write-Host "[OK] SELECT query executed!`n" -ForegroundColor Green
+                Write-Host "Results:" -ForegroundColor Cyan
+                $json | Format-Table -AutoSize | Out-String | Write-Host
+            }
+            catch {
+                Write-Host "[ERROR] Query failed: $result`n" -ForegroundColor Red
+            }
         }
         
         Write-Host "Disconnecting..." -ForegroundColor Yellow

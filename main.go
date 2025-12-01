@@ -7,6 +7,7 @@ import "C"
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -45,7 +46,6 @@ func ConnectDb(connStr *C.char) *C.char {
 		return C.CString(fmt.Sprintf("ERROR: Failed to connect to database: %v", err))
 	}
 
-	fmt.Println("INFO: Database connection established successfully.")
 	return nil // Success
 }
 
@@ -56,7 +56,6 @@ func DisconnectDb() {
 	if db != nil {
 		db.Close()
 		db = nil
-		fmt.Println("INFO: Database connection closed.")
 	}
 }
 
@@ -82,7 +81,6 @@ func processCreateTable(sql string) string {
 
 	// Inject the primary key column definition right after the opening parenthesis
 	processedSQL := sql[:firstParenIndex+1] + primaryKeyColumn + sql[firstParenIndex+1:]
-	fmt.Println("INFO: Added default PRIMARY KEY to CREATE TABLE statement.")
 	return processedSQL
 }
 
@@ -97,13 +95,12 @@ func processSelect(sql string) string {
 
 	// Prepend the SET statement.
 	processedSQL := "SET TRANSACTION ISOLATION LEVEL SNAPSHOT;\n" + sql
-	fmt.Println("INFO: Prepended SET TRANSACTION ISOLATION LEVEL SNAPSHOT to SELECT statement.")
 	return processedSQL
 }
 
 // ExecuteSql processes and executes a SQL statement.
 // It takes a C string as input, processes it, executes it on the connected DB,
-// and returns a C string with an error message if it fails.
+// and returns a C string with the results (JSON for SELECT) or error message.
 // The caller is RESPONSIBLE for freeing the returned C string using FreeCString.
 //
 //export ExecuteSql
@@ -116,28 +113,95 @@ func ExecuteSql(inputSql *C.char) *C.char {
 	trimmedUpperSql := strings.TrimSpace(strings.ToUpper(goSql))
 
 	var processedSql string
+	isSelect := false
 
 	if strings.HasPrefix(trimmedUpperSql, "CREATE TABLE") {
 		processedSql = processCreateTable(goSql)
 	} else if strings.HasPrefix(trimmedUpperSql, "SELECT") {
-		// Note: The driver will execute the SET and SELECT as separate statements in a batch.
-		// For queries that return data, a more complex function would be needed to handle row results.
-		// For this example, we assume Exec is sufficient (e.g., SELECT INTO).
 		processedSql = processSelect(goSql)
+		isSelect = true
 	} else {
 		// For any other SQL command, leave it unaltered
 		processedSql = goSql
 	}
 
-	// Execute the final SQL statement.
-	// Exec is suitable for commands that don't return rows (CREATE, INSERT, etc.)
-	_, err := db.Exec(processedSql)
-	if err != nil {
-		return C.CString(fmt.Sprintf("ERROR: SQL execution failed: %v", err))
-	}
+	if isSelect {
+		// If the processed SQL has a SET statement, execute it first
+		if strings.Contains(processedSql, "SET TRANSACTION ISOLATION LEVEL SNAPSHOT") {
+			// Execute the SET statement first
+			_, err := db.Exec("SET TRANSACTION ISOLATION LEVEL SNAPSHOT")
+			if err != nil {
+				return C.CString(fmt.Sprintf("ERROR: Failed to set isolation level: %v", err))
+			}
+			// Extract just the SELECT portion
+			parts := strings.SplitN(processedSql, "\n", 2)
+			if len(parts) > 1 {
+				processedSql = strings.TrimSpace(parts[1])
+			}
+		}
 
-	fmt.Printf("INFO: Successfully executed SQL: %s\n", processedSql)
-	return nil // Success
+		// Execute SELECT query and return JSON results
+		rows, err := db.Query(processedSql)
+		if err != nil {
+			return C.CString(fmt.Sprintf("ERROR: Query execution failed: %v", err))
+		}
+		defer rows.Close()
+
+		// Get column names
+		columns, err := rows.Columns()
+		if err != nil {
+			return C.CString(fmt.Sprintf("ERROR: Failed to get columns: %v", err))
+		}
+
+		// Build result set
+		var results []map[string]interface{}
+		for rows.Next() {
+			// Create a slice of interface{} to hold each column value
+			columnValues := make([]interface{}, len(columns))
+			columnPointers := make([]interface{}, len(columns))
+			for i := range columnValues {
+				columnPointers[i] = &columnValues[i]
+			}
+
+			// Scan the row into the column pointers
+			if err := rows.Scan(columnPointers...); err != nil {
+				return C.CString(fmt.Sprintf("ERROR: Failed to scan row: %v", err))
+			}
+
+			// Create a map for this row
+			row := make(map[string]interface{})
+			for i, colName := range columns {
+				val := columnValues[i]
+				// Convert byte arrays to strings for better JSON representation
+				if b, ok := val.([]byte); ok {
+					row[colName] = string(b)
+				} else {
+					row[colName] = val
+				}
+			}
+			results = append(results, row)
+		}
+
+		if err = rows.Err(); err != nil {
+			return C.CString(fmt.Sprintf("ERROR: Row iteration error: %v", err))
+		}
+
+		// Marshal results to JSON
+		jsonData, err := json.Marshal(results)
+		if err != nil {
+			return C.CString(fmt.Sprintf("ERROR: Failed to marshal JSON: %v", err))
+		}
+
+		return C.CString(string(jsonData))
+	} else {
+		// Execute non-SELECT statement
+		_, err := db.Exec(processedSql)
+		if err != nil {
+			return C.CString(fmt.Sprintf("ERROR: SQL execution failed: %v", err))
+		}
+
+		return nil // Success
+	}
 }
 
 // FreeCString frees the memory for a C string allocated by Go.

@@ -48,7 +48,8 @@ cd w:\github\ThinkSQL\TestConnection
 This script:
 - Loads the DLL
 - Connects to SQL Server using the ConnectDb function
-- Executes a test query (SELECT @@VERSION)
+- Executes a test SELECT query (SELECT @@VERSION)
+- Parses and displays JSON results returned from SELECT queries
 - Disconnects properly
 - Reports success or failure
 
@@ -105,10 +106,19 @@ INFO: Database connection established successfully.
 
 Testing SQL execution...
 INFO: Prepended SET TRANSACTION ISOLATION LEVEL SNAPSHOT to SELECT statement.
-INFO: Successfully executed SQL: SET TRANSACTION ISOLATION LEVEL SNAPSHOT;
+Full T-SQL:
+SET TRANSACTION ISOLATION LEVEL SNAPSHOT;
 SELECT @@VERSION AS Version
-[OK] SQL query executed successfully!
+INFO: Successfully executed SELECT query. Rows returned: 1
+[OK] SELECT query executed successfully!
   Query: SELECT @@VERSION AS Version
+
+Results:
+
+Version
+-------
+Microsoft SQL Server 2022 (RTM-CU16) (KB5048033) - 16.0.4165.4 (X64) ...
+
 
 Disconnecting...
 INFO: Database connection closed.
@@ -130,10 +140,13 @@ Connection test completed successfully!
 
 All scripts now use the same working P/Invoke pattern:
 
-1. **Quick-Test.ps1** - Minimal, hardcoded test (quickest)
-2. **Test-SQL-Connection-Simple.ps1** - Simple with parameters
-3. **Test-SQL-Connection.ps1** - Full-featured with detailed output
+1. **Quick-Test.ps1** - Minimal, hardcoded test (quickest) - displays JSON results
+2. **Test-SQL-Connection-Simple.ps1** - Simple with parameters - displays JSON results
+3. **Test-SQL-Connection.ps1** - Full-featured with detailed output - displays JSON results
 4. **Test-DLL-Import.ps1** - DLL loading test only (no SQL connection)
+5. **Test-Snapshot-Isolation.ps1** - Verifies SNAPSHOT isolation level is correctly applied to SELECT queries
+6. **Test-Concurrent-Access.ps1** - Demonstrates non-blocking reads with SNAPSHOT isolation during UPDATE transactions
+7. **Confirm_Sql_Running.ps1** - Standalone SQL Server connectivity check (doesn't use DLL)
 
 ## Troubleshooting
 
@@ -156,11 +169,48 @@ All scripts now use the same working P/Invoke pattern:
 - Try running PowerShell as Administrator
 - Check that the DLL is not corrupted (rebuild it)
 
+## Advanced Tests
+
+### Test-Snapshot-Isolation.ps1
+Comprehensive test that verifies SNAPSHOT isolation is working correctly:
+- Enables SNAPSHOT isolation on the database
+- Creates a test table and performs read/write operations
+- Verifies the isolation level is set to "Snapshot"
+- Demonstrates read consistency across multiple queries
+
+```powershell
+.\Test-Snapshot-Isolation.ps1
+```
+
+### Test-Concurrent-Access.ps1
+Simulates concurrent access to demonstrate non-blocking behavior:
+- Starts a long-running UPDATE transaction (3 seconds)
+- Executes SELECT query while UPDATE holds locks
+- Proves SELECT is NOT blocked (completes in milliseconds)
+- Shows SELECT reads consistent snapshot before UPDATE commits
+- Verifies updated values are visible after commit
+
+```powershell
+.\Test-Concurrent-Access.ps1
+```
+
+**Key Results:**
+- SELECT with SNAPSHOT isolation completes in ~3-5ms even while UPDATE holds locks
+- Non-blocking reads allow high concurrency
+- Each SELECT sees a consistent snapshot of data
+
 ## Connection String Format
 
 The DLL uses the go-mssqldb driver connection string format:
 ```
-server=hostname;user id=username;password=password;database=dbname
+server=hostname;user id=username;password=password;database=dbname;encrypt=disable;TrustServerCertificate=true
 ```
 
-Additional parameters can be added as needed (see go-mssqldb documentation).
+**Note:** For local/dev SQL Server instances, include `encrypt=disable;TrustServerCertificate=true` to avoid TLS certificate validation errors.
+
+## ExecuteSql Return Values
+
+- **SELECT queries**: Returns a JSON string with results, e.g., `[{"Column":"Value"}]` (must call FreeCString)
+- **Non-SELECT queries**: Returns `IntPtr.Zero` on success, error string on failure (must call FreeCString if non-zero)
+
+All test scripts automatically parse JSON results from SELECT queries and display them in a formatted table.

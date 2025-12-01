@@ -48,14 +48,33 @@ if ($result -eq [IntPtr]::Zero) {
     Write-Host "[OK] Connected!" -ForegroundColor Green
     
     Write-Host "Testing query..." -ForegroundColor Yellow
-    $execResult = [Win32.ThinkSQL]::ExecuteSql("SELECT @@VERSION")
+    $execResult = [Win32.ThinkSQL]::ExecuteSql("SELECT @@VERSION AS ServerVersion")
     
     if ($execResult -eq [IntPtr]::Zero) {
-        Write-Host "[OK] Query executed!" -ForegroundColor Green
+        Write-Host "[ERROR] Expected JSON results but got null" -ForegroundColor Red
     }
     else {
-        $err = [Win32.ThinkSQL]::PtrToString($execResult)
-        Write-Host "[ERROR] $err" -ForegroundColor Red
+        $jsonResults = [Win32.ThinkSQL]::PtrToString($execResult)
+        
+        # Check if it's an error message
+        if ($jsonResults.StartsWith("ERROR:")) {
+            Write-Host "[ERROR] $jsonResults" -ForegroundColor Red
+        }
+        else {
+            Write-Host "[OK] Query executed!" -ForegroundColor Green
+            Write-Host "Results (JSON):" -ForegroundColor Cyan
+            
+            # Pretty print JSON
+            try {
+                $jsonObj = $jsonResults | ConvertFrom-Json
+                $jsonObj | Format-Table -AutoSize
+                Write-Host "Raw JSON: $jsonResults" -ForegroundColor Gray
+            }
+            catch {
+                Write-Host $jsonResults -ForegroundColor White
+            }
+        }
+        
         [Win32.ThinkSQL]::FreeCString($execResult)
     }
     
