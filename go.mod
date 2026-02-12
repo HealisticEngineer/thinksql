@@ -1,6 +1,6 @@
 module github.com/HealisticEngineer/ThinkSQL
 
-go 1.24.3
+go 1.25.7
 
 require github.com/denisenkom/go-mssqldb v0.12.3
 
