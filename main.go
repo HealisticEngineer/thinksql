@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unsafe"
 
 	_ "github.com/microsoft/go-mssqldb" // SQL Server driver
@@ -21,6 +22,16 @@ import (
 
 // Global variable to hold the database connection pool.
 var db *sql.DB
+
+// Track the current connection string to enable fast reconnect
+var currentConnStr string
+
+// Cached pool kept alive across disconnect/reconnect cycles (like .NET connection pooling)
+var cachedDb *sql.DB
+var cachedConnStr string
+
+// connected tracks whether the user considers the connection "open"
+var connected bool
 
 // main is required for the build, but it does not run in a shared library.
 func main() {}
@@ -34,21 +45,70 @@ func main() {}
 //export ConnectDb
 func ConnectDb(connStr *C.char) *C.char {
 	goConnStr := C.GoString(connStr)
+
+	// Fast path: already connected with same connection string
+	if db != nil && connected && currentConnStr == goConnStr {
+		if err := db.Ping(); err == nil {
+			return nil // Existing connection is still good
+		}
+		// Connection is stale, fall through to reconnect
+		db.Close()
+		db = nil
+		currentConnStr = ""
+		cachedDb = nil
+		cachedConnStr = ""
+	}
+
+	// Pool reuse path: reuse cached pool from a prior disconnect (like .NET connection pooling)
+	if cachedDb != nil && cachedConnStr == goConnStr {
+		if err := cachedDb.Ping(); err == nil {
+			db = cachedDb
+			currentConnStr = goConnStr
+			connected = true
+			return nil
+		}
+		// Cached pool is dead, discard it
+		cachedDb.Close()
+		cachedDb = nil
+		cachedConnStr = ""
+	}
+
+	// Close any existing connection/pool with a different connection string
+	if db != nil {
+		db.Close()
+		db = nil
+		currentConnStr = ""
+	}
+	if cachedDb != nil {
+		cachedDb.Close()
+		cachedDb = nil
+		cachedConnStr = ""
+	}
+
 	var err error
 
-	// Open a connection to the database
+	// Open a new connection pool
 	db, err = sql.Open("sqlserver", goConnStr)
 	if err != nil {
 		return C.CString(fmt.Sprintf("ERROR: Failed to open connection: %v", err))
 	}
 
+	// Configure connection pool for performance
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(2 * time.Minute)
+
 	// Ping the database to verify the connection is alive
 	err = db.Ping()
 	if err != nil {
-		db.Close() // Close the connection if ping fails
+		db.Close()
+		db = nil
 		return C.CString(fmt.Sprintf("ERROR: Failed to connect to database: %v", err))
 	}
 
+	currentConnStr = goConnStr
+	connected = true
 	return nil // Success
 }
 
@@ -57,9 +117,13 @@ func ConnectDb(connStr *C.char) *C.char {
 //export DisconnectDb
 func DisconnectDb() {
 	if db != nil {
-		db.Close()
+		// Cache the pool for fast reconnect instead of destroying it
+		cachedDb = db
+		cachedConnStr = currentConnStr
 		db = nil
 	}
+	currentConnStr = ""
+	connected = false
 }
 
 // processCreateTable checks a CREATE TABLE statement for a PRIMARY KEY.

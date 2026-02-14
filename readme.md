@@ -83,19 +83,19 @@ See `ThinkSQL-Module\README.md` for complete documentation.
 
 ## Performance
 
-ThinkSQL has been benchmarked against the standard SqlServer PowerShell module using rigorous testing (5 runs × 50 iterations = 250 operations per test):
+ThinkSQL has been benchmarked against the standard SqlServer PowerShell module using rigorous testing (10 runs × 100 iterations = 1,000 operations per test):
 
 | Operation | ThinkSQL (±SD) | SqlServer Module (±SD) | ADO.NET Baseline (±SD) | vs SqlServer | vs ADO.NET |
 |-----------|----------------|------------------------|------------------------|--------------|------------|
-| **Connection** | **4.46 (±0.21)** | **5.55 (±8.12)** | **0.01ms (±0)** | **1.24x faster** | **0x** |
-| System Query | 1.7ms (±0.14) | 1.00ms (±0.02) | 0.86ms (±0.06) | 0.51x | 0.44x |
-| Aggregate Query | 2.28ms (±0.04) | 1.52ms (±0.02) | 1.44ms (±0.02) | 0.67x | 0.63x |
-| Large Aggregate | 6.15ms (±0.07) | 5.53ms (±0.14) | 5.58ms (±0.37) | 0.90x | 0.91x |
-| Simple SELECT | 1.49ms (±0.03) | 0.79ms (±0.02) | 0.69ms (±0.01) | 0.53x | 0.46x |
-| Batch (5 queries) | 8.82ms (±0.09) | 5.18ms (±0.03) | 4.81ms (±0.04) | 0.59x | 0.55x |
-| Bulk INSERT (100 rows) | 3.10ms (±0.11) | 2.95ms (±0.09) | 2.75ms (±0.12) | 0.95x | 0.89x |
-| Sequential (3 queries) | 6.00ms (±0.35) | 3.57ms (±0.05) | 3.34ms (±0.03) | 0.60x | 0.56x |
-| **Overall Average** | **4.28ms** | **3.35ms** | **2.44ms** | **1.28x** | **1.76x** |
+| **Connection** | **1.11ms (±0.31)** | **2.31ms (±4.5)** | **0.01ms (±0)** | **2.09x faster** | **—** |
+| System Query | 1.84ms (±0.04) | 0.97ms (±0.03) | 0.90ms (±0.02) | 0.53x | 0.49x |
+| Aggregate Query | 2.32ms (±0.11) | 1.41ms (±0.02) | 1.36ms (±0.03) | 0.61x | 0.59x |
+| Large Aggregate | 7.61ms (±0.27) | 4.81ms (±0.10) | 4.70ms (±0.07) | 0.63x | 0.62x |
+| Simple SELECT | 1.71ms (±0.05) | 0.84ms (±0.01) | 0.76ms (±0.01) | 0.49x | 0.45x |
+| Batch (5 queries) | 9.32ms (±0.08) | 5.16ms (±0.06) | 4.77ms (±0.05) | 0.55x | 0.51x |
+| Bulk INSERT (100 rows) | 3.80ms (±0.27) | 3.59ms (±0.10) | 3.42ms (±0.08) | 0.94x | 0.90x |
+| Sequential (3 queries) | 6.00ms (±0.08) | 3.51ms (±0.02) | 3.24ms (±0.05) | 0.59x | 0.54x |
+| **Overall Average** | **4.21ms** | **2.83ms** | **2.40ms** | **1.49x** | **1.76x** |
 
 ### Blocking Behavior Test (SNAPSHOT Isolation Advantage)
 
@@ -103,23 +103,22 @@ This test demonstrates ThinkSQL's SNAPSHOT isolation preventing read blocking du
 
 | Method | Average Time | Blocked Queries | Success Rate | Status |
 |--------|-------------|-----------------|--------------|---------|
-| **ThinkSQL (SNAPSHOT)** | **1.72ms (±0.08)** | **0/30 (0%)** | **100%** | ✅ **Non-blocking** |
-| SqlServer (READ COMMITTED) | N/A | 30/30 (100%) | 0% | ❌ **All blocked** |
-| ADO.NET (READ COMMITTED) | N/A | 30/30 (100%) | 0% | ❌ **All blocked** |
+| **ThinkSQL (SNAPSHOT)** | **2.83ms (±0.04)** | **0/1,000 (0%)** | **100%** | ✅ **Non-blocking** |
+| SqlServer (READ COMMITTED) | N/A | 1,000/1,000 (100%) | 0% | ❌ **All blocked** |
+| ADO.NET (READ COMMITTED) | N/A | 1,000/1,000 (100%) | 0% | ❌ **All blocked** |
 
-**Test methodology**: Each iteration starts an uncommitted UPDATE transaction holding row locks, then attempts a SELECT query. ThinkSQL's SNAPSHOT isolation allows all reads to proceed without blocking, while SqlServer and ADO.NET modules (using default READ COMMITTED isolation) block waiting for the uncommitted transaction.
+**Test methodology**: Each iteration starts an uncommitted UPDATE transaction holding row locks, then attempts a SELECT query (1,000 total per method). ThinkSQL's SNAPSHOT isolation allows all reads to proceed without blocking, while SqlServer and ADO.NET modules (using default READ COMMITTED isolation) block waiting for the uncommitted transaction.
 
 ### Key Performance Characteristics:
-- **Connection Overhead**: ThinkSQL connection takes 4.48ms with excellent consistency (±0.23ms), while SqlServer module shows 6.26ms average with high variance (±12.1ms) due to first-run overhead. ThinkSQL is **1.4x faster** on connection establishment.
-- **Persistent Connection**: ThinkSQL maintains a single connection across queries, providing consistent performance
-- **Consistency**: ThinkSQL shows very stable performance (±0.03-0.35ms typical StdDev) vs SqlServer module's occasional variance spikes
+- **Connection Speed**: ThinkSQL connects in 1.11ms with pool caching (±0.31ms), **2.09x faster** than SqlServer module's 2.31ms (±4.5ms). Connection pool caching reuses Go's `sql.DB` pool across connect/disconnect cycles, avoiding full TCP+authentication handshakes on reconnection.
+- **Persistent Connection**: ThinkSQL maintains a single connection pool across queries, providing consistent performance
+- **Consistency**: ThinkSQL shows very stable performance (±0.04-0.31ms typical StdDev) vs SqlServer module's occasional variance spikes
 - **SNAPSHOT Isolation Advantage**: 
   - ThinkSQL automatically prepends `SET TRANSACTION ISOLATION LEVEL SNAPSHOT` to all SELECT queries
-  - **100% non-blocking reads** during write operations (0/30 queries blocked in testing)
-  - SqlServer and ADO.NET modules experience **100% blocking** (30/30 queries blocked) under the same conditions
+  - **100% non-blocking reads** during write operations (0/1,000 queries blocked in testing)
+  - SqlServer and ADO.NET modules experience **100% blocking** (1,000/1,000 queries blocked) under the same conditions
   - **Critical for high-concurrency applications** where reads shouldn't wait for uncommitted writes
-- **Large Query Performance**: On large aggregate queries (sys.all_objects), ThinkSQL is 0.90x vs SqlServer, with 9% better performance after optimizations (6.15ms vs 6.69ms pre-optimization)
-- **Bulk INSERT**: Very competitive at 3.10ms vs SqlServer's 2.95ms (0.95x ratio) for 100-row inserts
+- **Bulk INSERT**: Very competitive at 3.80ms vs SqlServer's 3.59ms (0.94x ratio) for 100-row inserts
 - **CGO Overhead**: The CGO interop and JSON marshaling adds ~1.76x overhead vs raw ADO.NET baseline
 - **Best Use Cases**: 
   - **High-concurrency applications** requiring non-blocking reads (SNAPSHOT isolation by default)
@@ -128,7 +127,7 @@ This test demonstrates ThinkSQL's SNAPSHOT isolation preventing read blocking du
   - **Applications that need to read during long-running write operations**
   - Moderate-sized result sets where JSON marshaling overhead is acceptable
 
-**Note**: While SqlServer module shows better raw speed on individual queries due to direct .NET integration, ThinkSQL's value proposition is in **non-blocking concurrency** (SNAPSHOT isolation), connection persistence, and very predictable performance characteristics. The blocking behavior test demonstrates that ThinkSQL allows 100% of queries to proceed during write operations, while standard READ COMMITTED isolation blocks all queries - a critical advantage for high-concurrency scenarios.
+**Note**: While SqlServer module shows better raw speed on individual queries due to direct .NET integration, ThinkSQL's value proposition is in **non-blocking concurrency** (SNAPSHOT isolation), fast connection pooling, and very predictable performance characteristics. The blocking behavior test demonstrates that ThinkSQL allows 100% of queries to proceed during write operations, while standard READ COMMITTED isolation blocks all queries - a critical advantage for high-concurrency scenarios.
 
 Run `.\Performance-Comparison.ps1 -Runs 10` to benchmark on your system with statistically averaged results.
 
