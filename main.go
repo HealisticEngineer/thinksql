@@ -6,6 +6,7 @@ package main
 import "C"
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -17,8 +18,8 @@ import (
 	_ "github.com/microsoft/go-mssqldb" // SQL Server driver
 )
 
-// jsonEscapeString provides faster string escaping for JSON without full Marshal overhead
-// This is used for simple cases but we still use json.Marshal for safety with complex types
+// Pre-compiled regex for SNAPSHOT hint detection (avoids recompilation on every query)
+var snapshotHintRegex = regexp.MustCompile(`(?i)\bWITH\s*\(\s*SNAPSHOT\s*\)`)
 
 // Global variable to hold the database connection pool.
 var db *sql.DB
@@ -151,18 +152,51 @@ func processCreateTable(sql string) string {
 	return processedSQL
 }
 
-// processSelect checks a SELECT statement and prepends the snapshot isolation level
-// command if it's not already hinted at.
-func processSelect(sql string) string {
-	// Use a regex to check for the presence of the WITH (SNAPSHOT) hint.
-	re := regexp.MustCompile(`(?i)\bWITH\s*\(\s*SNAPSHOT\s*\)`)
-	if re.MatchString(sql) {
-		return sql
+// processSelect checks a SELECT statement for the WITH (SNAPSHOT) hint.
+// Returns the SQL unchanged and whether SNAPSHOT isolation needs to be set.
+// Uses pre-compiled regex for performance.
+func processSelect(sqlStr string) (string, bool) {
+	if snapshotHintRegex.MatchString(sqlStr) {
+		return sqlStr, false
 	}
+	return sqlStr, true // needs snapshot isolation
+}
 
-	// Prepend the SET statement.
-	processedSQL := "SET TRANSACTION ISOLATION LEVEL SNAPSHOT;\n" + sql
-	return processedSQL
+// formatJSONValue writes a Go value as JSON into a bytes.Buffer without json.Marshal reflection overhead.
+// Handles the common types returned by database/sql scanning.
+func formatJSONValue(buf *bytes.Buffer, val interface{}) {
+	if val == nil {
+		buf.WriteString("null")
+		return
+	}
+	switch v := val.(type) {
+	case int64:
+		fmt.Fprintf(buf, "%d", v)
+	case float64:
+		fmt.Fprintf(buf, "%g", v)
+	case bool:
+		if v {
+			buf.WriteString("true")
+		} else {
+			buf.WriteString("false")
+		}
+	case string:
+		escaped, _ := json.Marshal(v)
+		buf.Write(escaped)
+	case []byte:
+		escaped, _ := json.Marshal(string(v))
+		buf.Write(escaped)
+	case time.Time:
+		escaped, _ := json.Marshal(v.Format(time.RFC3339Nano))
+		buf.Write(escaped)
+	default:
+		escaped, err := json.Marshal(v)
+		if err != nil {
+			buf.WriteString("null")
+		} else {
+			buf.Write(escaped)
+		}
+	}
 }
 
 // ExecuteSql processes and executes a SQL statement.
@@ -177,37 +211,32 @@ func ExecuteSql(inputSql *C.char) *C.char {
 	}
 
 	goSql := C.GoString(inputSql)
-	trimmedUpperSql := strings.TrimSpace(strings.ToUpper(goSql))
+	trimmedSql := strings.TrimSpace(goSql)
 
+	// Check prefix case-insensitively without allocating a full uppercase copy
 	var processedSql string
 	isSelect := false
 
-	if strings.HasPrefix(trimmedUpperSql, "CREATE TABLE") {
+	if len(trimmedSql) >= 12 && strings.EqualFold(trimmedSql[:12], "CREATE TABLE") {
 		processedSql = processCreateTable(goSql)
-	} else if strings.HasPrefix(trimmedUpperSql, "SELECT") {
-		processedSql = processSelect(goSql)
+	} else if len(trimmedSql) >= 6 && strings.EqualFold(trimmedSql[:6], "SELECT") {
 		isSelect = true
+		processedSql = goSql
 	} else {
 		// For any other SQL command, leave it unaltered
 		processedSql = goSql
 	}
 
 	if isSelect {
-		// If the processed SQL has a SET statement, execute it first
-		if strings.Contains(processedSql, "SET TRANSACTION ISOLATION LEVEL SNAPSHOT") {
-			// Execute the SET statement first
-			_, err := db.Exec("SET TRANSACTION ISOLATION LEVEL SNAPSHOT")
-			if err != nil {
-				return C.CString(fmt.Sprintf("ERROR: Failed to set isolation level: %v", err))
-			}
-			// Extract just the SELECT portion
-			parts := strings.SplitN(processedSql, "\n", 2)
-			if len(parts) > 1 {
-				processedSql = strings.TrimSpace(parts[1])
-			}
+		// Check if we need snapshot isolation
+		_, needsSnapshot := processSelect(processedSql)
+
+		if needsSnapshot {
+			// Combine SET + SELECT into a single batch to avoid an extra server roundtrip
+			processedSql = "SET TRANSACTION ISOLATION LEVEL SNAPSHOT;\n" + processedSql
 		}
 
-		// Execute SELECT query and return JSON results
+		// Execute SELECT query (with optional SET prefix as a single batch)
 		rows, err := db.Query(processedSql)
 		if err != nil {
 			return C.CString(fmt.Sprintf("ERROR: Query execution failed: %v", err))
@@ -220,48 +249,57 @@ func ExecuteSql(inputSql *C.char) *C.char {
 			return C.CString(fmt.Sprintf("ERROR: Failed to get columns: %v", err))
 		}
 
-		// Pre-allocate with initial capacity to reduce allocations
-		results := make([]map[string]interface{}, 0, 32)
-
-		// Reuse these slices across rows to reduce allocations
+		// Reuse scan buffers across rows
 		columnValues := make([]interface{}, len(columns))
 		columnPointers := make([]interface{}, len(columns))
 		for i := range columnValues {
 			columnPointers[i] = &columnValues[i]
 		}
 
-		// Build result set
+		// Pre-quote column names for JSON output (avoids re-marshaling on every row)
+		quotedColumns := make([][]byte, len(columns))
+		for i, col := range columns {
+			quoted, _ := json.Marshal(col)
+			quotedColumns[i] = quoted
+		}
+
+		// Build JSON directly into a buffer instead of building []map[string]interface{}
+		// then marshaling. This avoids map allocations and reflection-based marshaling.
+		var buf bytes.Buffer
+		buf.Grow(4096) // Pre-allocate buffer space
+		buf.WriteByte('[')
+
+		rowCount := 0
 		for rows.Next() {
-			// Scan the row into the column pointers
 			if err := rows.Scan(columnPointers...); err != nil {
 				return C.CString(fmt.Sprintf("ERROR: Failed to scan row: %v", err))
 			}
 
-			// Create a map for this row with pre-allocated size
-			row := make(map[string]interface{}, len(columns))
-			for i, colName := range columns {
-				val := columnValues[i]
-				// Convert byte arrays to strings for better JSON representation
-				if b, ok := val.([]byte); ok {
-					row[colName] = string(b)
-				} else {
-					row[colName] = val
-				}
+			if rowCount > 0 {
+				buf.WriteByte(',')
 			}
-			results = append(results, row)
+			buf.WriteByte('{')
+
+			for i := range columns {
+				if i > 0 {
+					buf.WriteByte(',')
+				}
+				buf.Write(quotedColumns[i])
+				buf.WriteByte(':')
+				formatJSONValue(&buf, columnValues[i])
+			}
+
+			buf.WriteByte('}')
+			rowCount++
 		}
 
 		if err = rows.Err(); err != nil {
 			return C.CString(fmt.Sprintf("ERROR: Row iteration error: %v", err))
 		}
 
-		// Marshal results to JSON with compact output (no indentation)
-		jsonData, err := json.Marshal(results)
-		if err != nil {
-			return C.CString(fmt.Sprintf("ERROR: Failed to marshal JSON: %v", err))
-		}
+		buf.WriteByte(']')
 
-		return C.CString(string(jsonData))
+		return C.CString(buf.String())
 	} else {
 		// Execute non-SELECT statement
 		_, err := db.Exec(processedSql)
