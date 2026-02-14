@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unsafe"
 
-	_ "github.com/denisenkom/go-mssqldb" // SQL Server driver
+	_ "github.com/microsoft/go-mssqldb" // SQL Server driver
 )
 
 // jsonEscapeString provides faster string escaping for JSON without full Marshal overhead
