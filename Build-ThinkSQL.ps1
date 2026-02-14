@@ -55,7 +55,10 @@ Write-Host ""
 Write-Host "Building DLL with CGO..." -ForegroundColor Yellow
 $env:CGO_ENABLED = "1"
 
-$buildOutput = & go build -buildmode=c-shared -o ThinkSQL.dll main.go 2>&1
+# -ldflags="-s -w" strips debug symbols and DWARF info
+# This is required because Go 1.26+ places debug sections before code sections
+# in the PE file, which causes the Windows PE loader to reject the DLL
+$buildOutput = & go build -buildmode=c-shared -ldflags="-s -w" -o ThinkSQL.dll main.go 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "✗ Build failed" -ForegroundColor Red
     Write-Host $buildOutput -ForegroundColor Red
