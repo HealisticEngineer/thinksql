@@ -19,7 +19,7 @@ Rather than raw SQL execution, ThinkSQL automatically:
 - [Test](#test)
 
 ## Requirements
-- Go 1.18 or later (tested with Go 1.25.x)
+- Go 1.18 or later (tested with Go 1.26.x)
 - GCC toolchain for CGO. Recommended: WinLibs (UCRT/MCF) via winget
 	- `winget install -e --id BrechtSanders.WinLibs.MCF.UCRT`
 - A local or reachable SQL Server instance for testing
@@ -32,16 +32,13 @@ cd w:\github\thinksql # Adjust path as needed
 .\Build-ThinkSQL.ps1
 ```
 
-If you encounter loader errors (0x8007000B) or interop issues, rebuild explicitly with WinLibs GCC:
+The build script uses `-ldflags="-s -w"` to strip debug symbols. This is **required** for Go 1.26+ because the linker places debug sections before code sections in the PE file, causing the Windows PE loader to reject the DLL with `BadImageFormatException` / error `0x8007000B`.
+
+If you need to build manually:
 
 ```powershell
-# Use WinLibs toolchain explicitly
-$env:CC  = 'C:\Users\<you>\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.MCF.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin\gcc.exe'
-$env:CXX = 'C:\Users\<you>\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.MCF.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin\g++.exe'
 $env:CGO_ENABLED = '1'
-$env:GOOS = 'windows'
-$env:GOARCH = 'amd64'
-go build -buildmode=c-shared -o ThinkSQL.dll main.go
+go build -buildmode=c-shared -ldflags="-s -w" -o ThinkSQL.dll main.go
 ```
 
 Output artifacts:
@@ -160,8 +157,7 @@ encrypt=disable;TrustServerCertificate=true
 in the connection string to avoid errors like `x509: negative serial number`. Adjust as needed for your environment.
 
 Troubleshooting tips:
-- 0x8007000B (incorrect format): ensure 64-bit PowerShell process and rebuild with WinLibs GCC as above.
-- PowerShell 7 Add-Type issues ("Value cannot be null. (Parameter 'path1')"): the provided scripts use absolute, escaped DLL paths and work in PowerShell 7 and Windows PowerShell 64-bit.
+- 0x8007000B (incorrect format) / "Value cannot be null. (Parameter 'path1')": rebuild with `-ldflags="-s -w"` (the build script does this automatically). Go 1.26+ places debug sections before code sections, which breaks the Windows PE loader. Stripping symbols fixes this and reduces DLL size.
 - TLS handshake errors on local SQL: keep `encrypt=disable;TrustServerCertificate=true` for dev, or install a valid cert and enable strict TLS in prod.
 - Missing runtime DLLs: with WinLibs builds this is uncommon; if needed, place required GCC runtime DLLs (e.g., `libstdc++-6.dll`, `libwinpthread-1.dll`, `libgcc_s_seh_64-1.dll`) beside `ThinkSQL.dll`.
 - DLL changes not reflecting: PowerShell caches the loaded type. Start a fresh PowerShell session with `pwsh -NoProfile` or restart your current session to reload updated DLLs.
