@@ -82,11 +82,23 @@ if (Test-Path "ThinkSQL.h") {
     Write-Host "✓ ThinkSQL.h created (C header file)" -ForegroundColor Green
 }
 
+# Copy DLL to ThinkSQL-Module
+$modulePath = Join-Path $PSScriptRoot "ThinkSQL-Module"
+if (Test-Path $modulePath) {
+    $moduleDll = Join-Path $modulePath "ThinkSQL.dll"
+    if (Test-Path $moduleDll) {
+        Remove-Item $moduleDll -Force
+        Write-Host "  Removed old ThinkSQL-Module/ThinkSQL.dll" -ForegroundColor Gray
+    }
+    Copy-Item "ThinkSQL.dll" -Destination $modulePath -Force
+    Write-Host "✓ ThinkSQL.dll copied to ThinkSQL-Module/" -ForegroundColor Green
+}
+
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "✓ Build Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Yellow
-Write-Host "  1. Run .\TestConnection\Test-DLL-Import.ps1 to test DLL loading" -ForegroundColor Gray
-Write-Host "  2. Run .\TestConnection\Test-SQL-Connection.ps1 to test SQL connection" -ForegroundColor Gray
+Write-Host "  1. Run .\TestConnection\Test-DLL.ps1 to test the DLL" -ForegroundColor Gray
+Write-Host "  2. Run .\TestConnection\Test-Module.ps1 to test the PowerShell module" -ForegroundColor Gray

@@ -21,6 +21,9 @@ import (
 // Pre-compiled regex for SNAPSHOT hint detection (avoids recompilation on every query)
 var snapshotHintRegex = regexp.MustCompile(`(?i)\bWITH\s*\(\s*SNAPSHOT\s*\)`)
 
+// Pre-compiled regex to detect a standalone SELECT statement inside a DECLARE batch
+var selectInBatchRegex = regexp.MustCompile(`(?i)(?:^|[;\s])SELECT\b`)
+
 // Global variable to hold the database connection pool.
 var db *sql.DB
 
@@ -199,6 +202,16 @@ func formatJSONValue(buf *bytes.Buffer, val interface{}) {
 	}
 }
 
+// declareBatchContainsSelect checks whether a DECLARE-based SQL batch
+// contains a SELECT statement that would return result rows.
+// It looks for a standalone SELECT keyword (not inside a sub-expression).
+func declareBatchContainsSelect(sql string) bool {
+	upper := strings.ToUpper(sql)
+	// Look for SELECT that appears as a statement (preceded by newline, semicolon, or start-of-batch
+	// after the DECLARE section). A simple heuristic: any standalone SELECT keyword in the batch.
+	return selectInBatchRegex.MatchString(upper)
+}
+
 // ExecuteSql processes and executes a SQL statement.
 // It takes a C string as input, processes it, executes it on the connected DB,
 // and returns a C string with the results (JSON for SELECT) or error message.
@@ -221,6 +234,16 @@ func ExecuteSql(inputSql *C.char) *C.char {
 		processedSql = processCreateTable(goSql)
 	} else if len(trimmedSql) >= 6 && strings.EqualFold(trimmedSql[:6], "SELECT") {
 		isSelect = true
+		processedSql = goSql
+	} else if len(trimmedSql) >= 4 && strings.EqualFold(trimmedSql[:4], "WITH") {
+		// WITH (CTE) — treat as a SELECT query that returns results
+		isSelect = true
+		processedSql = goSql
+	} else if len(trimmedSql) >= 7 && strings.EqualFold(trimmedSql[:7], "DECLARE") {
+		// DECLARE blocks that contain a SELECT should return JSON results
+		if declareBatchContainsSelect(trimmedSql) {
+			isSelect = true
+		}
 		processedSql = goSql
 	} else {
 		// For any other SQL command, leave it unaltered

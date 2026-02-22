@@ -1,6 +1,6 @@
 @{
     # Module information
-    ModuleVersion = '1.0.2'
+    ModuleVersion = '1.1.2'
     GUID = '5e8f7c9a-4b3d-4e2f-9a1c-6d8e4f7b2a9c'
     Author = 'John Hall'
     Copyright = '(c) 2025 John Hall. All rights reserved.'
@@ -36,7 +36,7 @@
             LicenseUri = ''
             ProjectUri = 'https://github.com/HealisticEngineer/thinksql'
             ReleaseNotes = @'
-Version 1.0.2
+Version 1.1.2
 - Initial release
 - Connect/disconnect to SQL Server
 - Execute SQL with automatic processing
