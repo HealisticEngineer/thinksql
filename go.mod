@@ -2,7 +2,7 @@ module github.com/HealisticEngineer/ThinkSQL
 
 go 1.26.0
 
-require github.com/microsoft/go-mssqldb v1.9.6
+require github.com/microsoft/go-mssqldb v1.9.8
 
 require (
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9 // indirect
