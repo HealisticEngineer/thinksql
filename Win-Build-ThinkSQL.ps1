@@ -102,3 +102,4 @@ Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Yellow
 Write-Host "  1. Run .\TestConnection\Test-DLL.ps1 to test the DLL" -ForegroundColor Gray
 Write-Host "  2. Run .\TestConnection\Test-Module.ps1 to test the PowerShell module" -ForegroundColor Gray
+Write-Host "  3. Run .\Build-JDBC.ps1 to build the JDBC driver JAR" -ForegroundColor Gray

@@ -30,10 +30,6 @@ var db *sql.DB
 // Track the current connection string to enable fast reconnect
 var currentConnStr string
 
-// Cached pool kept alive across disconnect/reconnect cycles (like .NET connection pooling)
-var cachedDb *sql.DB
-var cachedConnStr string
-
 // connected tracks whether the user considers the connection "open"
 var connected bool
 
@@ -59,34 +55,13 @@ func ConnectDb(connStr *C.char) *C.char {
 		db.Close()
 		db = nil
 		currentConnStr = ""
-		cachedDb = nil
-		cachedConnStr = ""
 	}
 
-	// Pool reuse path: reuse cached pool from a prior disconnect (like .NET connection pooling)
-	if cachedDb != nil && cachedConnStr == goConnStr {
-		if err := cachedDb.Ping(); err == nil {
-			db = cachedDb
-			currentConnStr = goConnStr
-			connected = true
-			return nil
-		}
-		// Cached pool is dead, discard it
-		cachedDb.Close()
-		cachedDb = nil
-		cachedConnStr = ""
-	}
-
-	// Close any existing connection/pool with a different connection string
+	// Close any existing connection with a different connection string.
 	if db != nil {
 		db.Close()
 		db = nil
 		currentConnStr = ""
-	}
-	if cachedDb != nil {
-		cachedDb.Close()
-		cachedDb = nil
-		cachedConnStr = ""
 	}
 
 	var err error
@@ -116,14 +91,12 @@ func ConnectDb(connStr *C.char) *C.char {
 	return nil // Success
 }
 
-// DisconnectDb closes the database connection.
+// DisconnectDb closes the database connection and its pool.
 //
 //export DisconnectDb
 func DisconnectDb() {
 	if db != nil {
-		// Cache the pool for fast reconnect instead of destroying it
-		cachedDb = db
-		cachedConnStr = currentConnStr
+		db.Close()
 		db = nil
 	}
 	currentConnStr = ""
